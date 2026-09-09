@@ -1,0 +1,110 @@
+name: Update VPN subscription
+
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch and merge subscriptions
+        env:
+          SUB1: "https://flux-or.ru/ac3970b8-9645-45f7-98a1-4f84dfe39e73_all.json"
+          SUB2: "https://xpnet.store/sub/C2oPZbr8Zn-nzm58"
+          SUB3: "https://system.mcufa.pro/sub/Vr-6c7s6khhfHEP1T5r75eLCG"
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import base64
+          import urllib.request
+
+          sources = [
+              os.environ["SUB1"],
+              os.environ["SUB2"],
+              os.environ["SUB3"],
+          ]
+
+          result = []
+          seen = set()
+
+          def decode_base64(text):
+              text = text.strip()
+              try:
+                  padded = text + "=" * (-len(text) % 4)
+                  return base64.urlsafe_b64decode(padded).decode("utf-8", "ignore")
+              except Exception:
+                  try:
+                      padded = text + "=" * (-len(text) % 4)
+                      return base64.b64decode(padded).decode("utf-8", "ignore")
+                  except Exception:
+                      return text
+
+          for url in sources:
+              try:
+                  req = urllib.request.Request(
+                      url,
+                      headers={"User-Agent": "Mozilla/5.0"}
+                  )
+
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      data = response.read().decode("utf-8", "ignore")
+
+                  decoded = decode_base64(data)
+
+                  # Если внутри находится base64-подписка,
+                  # пытаемся декодировать её ещё раз.
+                  if not re.search(
+                      r"(vless://|vmess://|trojan://|ss://|ssconf://)",
+                      decoded,
+                      re.I
+                  ):
+                      second = decode_base64(decoded)
+                      if re.search(
+                          r"(vless://|vmess://|trojan://|ss://|ssconf://)",
+                          second,
+                          re.I
+                      ):
+                          decoded = second
+
+                  # Извлекаем поддерживаемые конфигурации.
+                  configs = re.findall(
+                      r"(?:vless|vmess|trojan|ss|ssconf)://[^\s\r\n]+",
+                      decoded,
+                      re.I
+                  )
+
+                  for config in configs:
+                      config = config.strip()
+
+                      if config and config not in seen:
+                          seen.add(config)
+                          result.append(config)
+
+                  print(f"Fetched: {url} -> {len(configs)} configs")
+
+              except Exception as e:
+                  print(f"ERROR: {url}")
+                  print(e)
+
+          # Записываем объединённую подписку.
+          with open("all.txt", "w", encoding="utf-8") as f:
+              f.write("\n".join(result))
+              if result:
+                  f.write("\n")
+
+          print(f"Total unique configs: {len(result)}")
+          PY
+
+      - name: Commit updated subscription
+        run: |
+          git config user.name "github
